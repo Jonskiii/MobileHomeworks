@@ -1,0 +1,270 @@
+package com.example.hw3
+
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.rememberNavController
+import com.example.hw3.ui.theme.HW3Theme
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.compose.material3.Button
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavHostController
+import androidx.room.ColumnInfo
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        val db = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java, "database"
+        ).allowMainThreadQueries().build()
+        setContent {
+            HW3Theme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    NavigationHost(userDao = db.userDao())
+                }
+            }
+        }
+    }
+}
+data class Message(val author: String, val body: String)
+
+@Entity
+data class User(
+    @PrimaryKey val uid: Int = 1,
+    @ColumnInfo(name = "username") val username: String?,
+    @ColumnInfo(name = "image_path") val imagePath: String?
+)
+
+@Dao
+interface UserDao {
+    @Query("SELECT * FROM user Where uid = 1 LIMIT 1")
+    fun getUser(): User?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertUser(user: User)
+}
+
+@Database(entities = [User::class], version = 1)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun userDao(): UserDao
+}
+@Composable
+fun NavigationHost(
+    userDao: UserDao,
+    navController: NavHostController = rememberNavController()
+) {
+    NavHost(navController = navController, startDestination = "home") {
+
+        composable("home") {
+            val user = remember { userDao.getUser()}
+            val imageUri = user?.imagePath?.let { Uri.fromFile(java.io.File(it)) }
+            val username = user?.username ?: "Pekka"
+            Column {
+                Button (
+                    onClick = { navController.navigate("second") },
+                    modifier = Modifier.padding(16.dp)
+                        .align(Alignment.CenterHorizontally),
+                    shape = MaterialTheme.shapes.medium
+                )
+                {
+                    Text("Muokkaa profiilia")
+                }
+                Keskustelu(SampleData.conversationSample,
+                    currentUserName = username,
+                    currentUserImage = imageUri)
+            }
+        }
+        composable ("second") {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                EditProfileScreen(userDao = userDao, navController = navController)
+                Spacer(modifier = Modifier.height(40.dp))
+
+                Button(
+                    onClick = {
+                        navController.navigate("home") {
+                            popUpTo("home")
+                        }
+                    },
+                    modifier = Modifier.padding(10.dp),
+                    shape = MaterialTheme.shapes.medium
+                )
+                {
+                    Spacer(modifier = Modifier.height(40.dp))
+                    Text("Palaa Takaisin")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EditProfileScreen(
+    userDao: UserDao,
+    navController: androidx.navigation.NavController
+) {
+    val context = LocalContext.current
+
+    val savedUser = remember { userDao.getUser()}
+
+    var userName by remember { mutableStateOf(savedUser?.username ?: "") }
+
+    var imageUri by remember {mutableStateOf(savedUser?.imagePath?.let
+    {Uri.fromFile(java.io.File(it)) })
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) {uri: Uri? ->
+        if (uri != null) {
+            val newPath = saveImageToAppStorage(context, uri)
+
+            if (newPath != null) {
+                imageUri = Uri.fromFile(java.io.File(newPath))
+            }
+        }
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        ProfileImage(imageUri = imageUri, modifier = Modifier.size(100.dp))
+
+        androidx.compose.material3.TextField(
+            value = userName,
+            onValueChange = { userName = it },
+            label = { Text("Käyttäjänimi") }
+        )
+
+        Button(onClick = {
+            userDao.insertUser(User(username = userName, imagePath = imageUri?.path))
+            navController.popBackStack()
+        }) {
+            Text("Tallenna profiili")
+        }
+
+        Button(onClick = { photoPickerLauncher.launch(
+            androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )}) {
+            Text("Valitse kuva")
+        }
+    }
+}
+
+
+@Composable
+fun ProfileImage(
+    imageUri: Any?,
+    modifier: Modifier = Modifier)
+{
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(imageUri)
+            .crossfade(true)
+            .build(),
+        placeholder = painterResource(android.R.drawable.ic_menu_camera),
+        error = painterResource(android.R.drawable.ic_menu_camera),
+        fallback = painterResource(android.R.drawable.ic_menu_camera),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier.clip(CircleShape)
+    )
+}
+@Composable
+fun Greeting(msg: Message, userImageUri: Uri?) {
+    Row(modifier = Modifier.padding(all = 8.dp)) {
+        ProfileImage(imageUri = userImageUri,
+            modifier = Modifier
+                .size(50.dp)
+                .border(1.5.dp, MaterialTheme.colorScheme.secondary, CircleShape)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+
+        var isExpanded by remember { mutableStateOf(false) }
+
+        Column(modifier = Modifier.clickable { isExpanded = !isExpanded }) {
+            Text(text = msg.author, color = MaterialTheme.colorScheme.secondary,
+                style = MaterialTheme.typography.titleSmall)
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Surface(shape = MaterialTheme.shapes.medium, shadowElevation = 2.dp) {
+                Text(text = msg.body, modifier = Modifier.padding(all = 4.dp),
+                    maxLines = if (isExpanded) Int.MAX_VALUE else 1,
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+@Composable
+fun Keskustelu(messages: List<Message>,
+               currentUserName: String,
+               currentUserImage: Uri?) {
+    LazyColumn{
+        items(messages) { message -> val messageToDisplay = Message(
+            author = currentUserName,
+            body = message.body
+        )
+            Greeting(msg = messageToDisplay, userImageUri = currentUserImage)
+        }
+    }
+}
+fun saveImageToAppStorage(context: android.content.Context, uri: Uri): String? {
+    try {
+        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+        val file = java.io.File(context.filesDir, "images.jpg")
+        val outputStream = java.io.FileOutputStream(file)
+        inputStream.copyTo(outputStream)
+        inputStream.close()
+        outputStream.close()
+        return file.absolutePath
+    } catch (e: Exception) {
+        return null
+    }
+}
+
