@@ -1,0 +1,226 @@
+package com.example.hw_4
+
+import android.app.NotificationChannel
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import android.Manifest
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Build
+import android.os.IBinder
+import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Button
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.core.content.ContextCompat
+import com.example.hw_4.ui.theme.HW_4Theme
+import kotlin.jvm.java
+import kotlin.math.sqrt
+class MainActivity : ComponentActivity(), SensorEventListener {
+
+    private lateinit var sensorManager: SensorManager
+    private var accelerometer: Sensor? = null
+
+    private var x by mutableStateOf(0f)
+    private var y by mutableStateOf(0f)
+    private var z by mutableStateOf(0f)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        enableEdgeToEdge()
+        setContent {
+            HW_4Theme {
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    Greeting(
+                        x = x, y = y, z = z,
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                }
+            }
+        }
+    }
+    override fun onResume() {
+        super.onResume()
+        accelerometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+    }
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(this)
+    }
+    override fun onSensorChanged(event: SensorEvent?) {
+        event?.let {
+            x = it.values[0]
+            y = it.values[1]
+            z = it.values[2]
+        }
+    }
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+}
+@Composable
+fun Greeting(x: Float, y: Float, z: Float, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+
+    fun startSensorService() {
+        val intent = Intent(
+            context,
+            SensorService::class.java
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        Toast.makeText(context, "Sensor service started", Toast.LENGTH_SHORT).show()
+
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                startSensorService()
+            } else {
+                Toast.makeText(context, "Permission denied", Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Sensor", style = MaterialTheme.typography.headlineMedium)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("X: $x")
+        Text("Y: $y")
+        Text("Z: $z")
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Button(onClick = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(
+                        context, Manifest.permission
+                            .POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    startSensorService()
+                } else {
+                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            } else {
+                startSensorService()
+            }
+        }) {
+            Text("Start Accelerometer Sensor")
+        }
+    }
+}
+class SensorService : Service(), SensorEventListener {
+
+    private lateinit var sensorManager: SensorManager
+    private var accelerometer: Sensor? = null
+    private var lastUpdate: Long = 0
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        accelerometer?.also {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val notification = NotificationCompat.Builder(this, "sensor_channel")
+            .setContentTitle("Sensori päällä")
+            .setContentText("Ravista puhelinta saadaksesi ilmoituksen")
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .build()
+        startForeground(1, notification)
+        return START_STICKY
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        event?.let {
+            val totalForce = sqrt(it.values[0] * it.values[0] + it.values[1] * it.values[1] + it.values[2] * it.values[2])
+            if (totalForce > 12 && (System.currentTimeMillis() - lastUpdate) > 1000) {
+                lastUpdate = System.currentTimeMillis()
+                sendShakeNotification()
+            }
+        }
+    }
+
+    private fun sendShakeNotification() {
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, "sensor_channel")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Puhelinta on ravistetty")
+            .setContentText("Kiihtyvyysanturi huomasi liikettä.")
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(2, notification)
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel("sensor_channel", "Sensor", NotificationManager.IMPORTANCE_HIGH)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    override fun onDestroy() {
+        super.onDestroy()
+        sensorManager.unregisterListener(this)
+    }
+}
+@Preview(showBackground = true)
+@Composable
+fun GreetingPreview() {
+    HW_4Theme {
+        Greeting(0f, 0f, 0f)
+    }
+}
